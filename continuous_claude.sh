@@ -167,7 +167,7 @@ wait_for_pr_checks() {
                 idx=$((idx + 1))
             done
             
-            echo "   ✓ Success: $success_count | ⏳ Pending: $pending_count | ✗ Failed: $failed_count" >&2
+            echo "   🟢 $success_count    🟡 $pending_count    🔴 $failed_count" >&2
         fi
 
         local pr_info
