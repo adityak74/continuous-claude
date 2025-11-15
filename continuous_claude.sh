@@ -403,6 +403,13 @@ continuous_claude_commit() {
     fi
 
     echo "✅ $iteration_display PR merged and local branch cleaned up" >&2
+    
+    # Ensure we're back on the main branch
+    if ! git checkout "$current_branch" >/dev/null 2>&1; then
+        echo "⚠️  $iteration_display Failed to checkout $current_branch" >&2
+        return 1
+    fi
+    
     return 0
 }
 
