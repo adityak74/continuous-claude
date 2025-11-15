@@ -52,20 +52,23 @@ jobs:
           echo "$COMMITS"
 
           # Determine bump type based on commit messages
-          # Look for conventional commit prefixes
-          if echo "$COMMITS" | grep -qiE "^(breaking|BREAKING CHANGE|feat!|fix!|chore!)"; then
+          # Look for conventional commit prefixes and gitmoji
+          if echo "$COMMITS" | grep -qiE "^(breaking|BREAKING CHANGE|feat!|fix!|chore!|:boom:)"; then
             # Major version bump for breaking changes
+            # :boom: = breaking changes
             MAJOR=$((MAJOR + 1))
             MINOR=0
             PATCH=0
             BUMP_TYPE="major"
-          elif echo "$COMMITS" | grep -qiE "^feat"; then
+          elif echo "$COMMITS" | grep -qiE "^(feat|:sparkles:)"; then
             # Minor version bump for new features
+            # :sparkles: = new feature
             MINOR=$((MINOR + 1))
             PATCH=0
             BUMP_TYPE="minor"
           else
             # Patch version bump for everything else
+            # :bug: = bug fix, :ambulance: = critical hotfix, etc.
             PATCH=$((PATCH + 1))
             BUMP_TYPE="patch"
           fi
