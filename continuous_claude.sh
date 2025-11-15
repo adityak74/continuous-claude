@@ -1,6 +1,7 @@
 #!/bin/bash
 
 ADDITIONAL_FLAGS="--dangerously-skip-permissions --output-format json"
+NOTES_FILE="ITERATION_NOTES.md"
 
 PROMPT=""
 MAX_RUNS=""
@@ -410,8 +411,45 @@ execute_single_iteration() {
     local iteration_display=$(get_iteration_display $iteration_num $MAX_RUNS $extra_iterations)
     echo "🔄 $iteration_display Starting iteration..." >&2
 
+    # Construct the enhanced prompt with notes file support
+    local enhanced_prompt="## PRIMARY GOAL
+
+$PROMPT
+
+"
+
+    # Read notes file if it exists
+    if [ -f "$NOTES_FILE" ]; then
+        local notes_content
+        notes_content=$(cat "$NOTES_FILE")
+        enhanced_prompt+="## CONTEXT FROM PREVIOUS ITERATION
+
+The following is from $NOTES_FILE, maintained by previous iterations to provide context:
+
+$notes_content
+
+"
+    fi
+
+    # Add instructions for maintaining the notes file
+    enhanced_prompt+="## ITERATION NOTES
+
+You should maintain a shared notes file called \`$NOTES_FILE\` to help coordinate work across iterations (both human and AI developers). This file should:
+
+- Contain relevant context and instructions for the next iteration
+- Be updated after each iteration (add new notes, remove outdated ones)
+- Stay concise and actionable (like a notes file, not a detailed report)
+- Help the next developer understand what to do next
+
+The file should NOT include:
+- Lists of completed work or full reports
+- Information that can be discovered by running tests/coverage
+- Unnecessary details
+
+Only include notes that are relevant to the next developer. If this is your first iteration and the file doesn't exist yet, create it. If it exists but contains outdated information, update or remove that information."
+
     local result
-    if ! result=$(run_claude_iteration "$PROMPT" "$ADDITIONAL_FLAGS" "$ERROR_LOG"); then
+    if ! result=$(run_claude_iteration "$enhanced_prompt" "$ADDITIONAL_FLAGS" "$ERROR_LOG"); then
         handle_iteration_error "$iteration_display" "exit_code" ""
         return 1
     fi
