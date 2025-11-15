@@ -83,6 +83,7 @@ continuous_claude_commit() {
 error_count=0
 extra_iterations=0
 successful_iterations=0
+total_cost=0
 i=1
 
 while [ $MAX_RUNS -eq 0 ] || [ $successful_iterations -lt $MAX_RUNS ]; do
@@ -165,6 +166,7 @@ while [ $MAX_RUNS -eq 0 ] || [ $successful_iterations -lt $MAX_RUNS ]; do
         if [ -n "$cost" ]; then
             echo "" >&2
             printf "💰 $iteration_display Cost: \$%.3f\n" "$cost" >&2
+            total_cost=$(awk "BEGIN {printf \"%.3f\", $total_cost + $cost}")
         fi
 
         echo "✅ $iteration_display Work completed" >&2
@@ -180,5 +182,9 @@ while [ $MAX_RUNS -eq 0 ] || [ $successful_iterations -lt $MAX_RUNS ]; do
 done
 
 if [ $MAX_RUNS -ne 0 ]; then
-    echo "🎉 Done"
+    if [ -n "$total_cost" ] && [ "$(awk "BEGIN {print ($total_cost > 0)}")" = "1" ]; then
+        printf "🎉 Done with total cost: \$%.3f\n" "$total_cost"
+    else 
+        echo "🎉 Done"
+    fi
 fi
