@@ -412,7 +412,13 @@ execute_single_iteration() {
     echo "🔄 $iteration_display Starting iteration..." >&2
 
     # Construct the enhanced prompt with notes file support
-    local enhanced_prompt="## PRIMARY GOAL
+    local enhanced_prompt="## CONTINUOUS WORKFLOW CONTEXT
+
+This is part of a continuous development loop where work happens incrementally across multiple iterations. You might run once, then a human developer might make changes, then you run again, and so on. This could happen daily or on any schedule.
+
+**Important**: You don't need to complete the entire goal in one iteration. Just make meaningful progress on one thing, then leave clear notes for the next iteration (human or AI). Think of it as a relay race where you're passing the baton.
+
+## PRIMARY GOAL
 
 $PROMPT
 
@@ -434,19 +440,26 @@ $notes_content
     # Add instructions for maintaining the notes file
     enhanced_prompt+="## ITERATION NOTES
 
-You should maintain a shared notes file called \`$NOTES_FILE\` to help coordinate work across iterations (both human and AI developers). This file should:
+"
+    
+    if [ -f "$NOTES_FILE" ]; then
+        enhanced_prompt+="Update the \`$NOTES_FILE\` file with relevant context for the next iteration. Add new notes and remove outdated information to keep it current and useful."
+    else
+        enhanced_prompt+="Create a \`$NOTES_FILE\` file with relevant context and instructions for the next iteration."
+    fi
+    
+    enhanced_prompt+="
+
+This file helps coordinate work across iterations (both human and AI developers). It should:
 
 - Contain relevant context and instructions for the next iteration
-- Be updated after each iteration (add new notes, remove outdated ones)
 - Stay concise and actionable (like a notes file, not a detailed report)
 - Help the next developer understand what to do next
 
 The file should NOT include:
 - Lists of completed work or full reports
 - Information that can be discovered by running tests/coverage
-- Unnecessary details
-
-Only include notes that are relevant to the next developer. If this is your first iteration and the file doesn't exist yet, create it. If it exists but contains outdated information, update or remove that information."
+- Unnecessary details"
 
     local result
     if ! result=$(run_claude_iteration "$enhanced_prompt" "$ADDITIONAL_FLAGS" "$ERROR_LOG"); then
