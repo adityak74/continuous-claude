@@ -185,7 +185,7 @@ merge_pr_and_cleanup() {
     local current_branch="$6"
 
     echo "🔀 $iteration_display Merging PR #$pr_number..." >&2
-    if ! gh pr merge "$pr_number" --repo "$owner/$repo" --merge >/dev/null 2>&1; then
+    if ! gh pr merge "$pr_number" --repo "$owner/$repo" --squash >/dev/null 2>&1; then
         echo "⚠️  $iteration_display Failed to merge PR (may have conflicts or be blocked)" >&2
         return 1
     fi
@@ -308,7 +308,7 @@ run_claude_iteration() {
     local flags="$2"
     local error_log="$3"
 
-    claude -p "$prompt" $flags 2> >(tee "$error_log" >&2) | tee >(cat >&2)
+    claude -p "$prompt" $flags 2> >(tee "$error_log" >&2)
 }
 
 parse_claude_result() {

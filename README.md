@@ -53,6 +53,27 @@ chmod +x continuous_claude.sh
 ./continuous_claude.sh -p "test changes" -m 2 --owner AnandChowdhary --repo continuous-claude --disable-commits
 ```
 
+## 📊 Example output
+
+Here's what a successful run looks like:
+
+```
+💰 (1/1) Cost: $0.042
+✅ (1/1) Work completed
+🌿 (1/1) Creating branch: continuous-claude/1-1763205620
+💬 (1/1) Committing changes...
+📦 (1/1) Changes committed on branch: continuous-claude/1-1763205620
+📤 (1/1) Pushing branch...
+🔨 (1/1) Creating pull request...
+🔍 (1/1) PR #3 created, waiting for checks...
+✅ (1/1) No checks configured, proceeding with merge
+🔀 (1/1) Merging PR #3...
+📥 (1/1) Pulling latest from main...
+🗑️  (1/1) Deleting local branch: continuous-claude/1-1763205620
+✅ (1/1) PR merged and local branch cleaned up
+🎉 Done with total cost: $0.042
+```
+
 ## 📃 License
 
 MIT (c) [Anand Chowdhary](https://anandchowdhary.com)
