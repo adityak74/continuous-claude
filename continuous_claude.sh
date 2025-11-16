@@ -83,6 +83,10 @@ parse_arguments() {
                 ENABLE_COMMITS=false
                 shift
                 ;;
+            --notes-file)
+                NOTES_FILE="$2"
+                shift 2
+                ;;
             *)
                 shift
                 ;;

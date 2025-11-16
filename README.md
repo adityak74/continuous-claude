@@ -121,6 +121,7 @@ continuous-claude --prompt "add unit tests until all code is covered" --max-cost
 - `--repo`: GitHub repository name (required)
 - `--merge-strategy`: Merge strategy: `squash`, `merge`, or `rebase` (default: `squash`)
 - `--git-branch-prefix`: Prefix for git branch names (default: `continuous-claude/`)
+- `--notes-file`: Path to shared task notes file (default: `SHARED_TASK_NOTES.md`)
 - `--disable-commits`: Disable automatic git commits, PR creation, and merging (useful for testing)
 
 ## 📝 Examples
@@ -146,6 +147,9 @@ continuous-claude -p "update dependencies" -m 3 --owner AnandChowdhary --repo co
 
 # Use custom branch prefix
 continuous-claude -p "refactor code" -m 3 --owner AnandChowdhary --repo continuous-claude --git-branch-prefix "feature/"
+
+# Use custom notes file
+continuous-claude -p "add features" -m 5 --owner AnandChowdhary --repo continuous-claude --notes-file "PROJECT_CONTEXT.md"
 
 # Test without creating commits or PRs
 continuous-claude -p "test changes" -m 2 --owner AnandChowdhary --repo continuous-claude --disable-commits
