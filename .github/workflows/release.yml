@@ -167,6 +167,15 @@ jobs:
 
           echo "✅ Updated version to $NEW_VERSION in continuous_claude.sh"
 
+      - name: Regenerate checksum
+        if: steps.check_version.outputs.should_release == 'true'
+        run: |
+          # Generate sha256 checksum alongside the script
+          sha256sum continuous_claude.sh > continuous_claude.sh.sha256
+          cat continuous_claude.sh.sha256
+
+          echo "✅ Regenerated continuous_claude.sh.sha256"
+
       - name: Generate release notes
         id: release_notes
         if: steps.check_version.outputs.should_release == 'true'
@@ -272,7 +281,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           # Stage and commit changes
-          git add continuous_claude.sh CHANGELOG.md
+          git add continuous_claude.sh continuous_claude.sh.sha256 CHANGELOG.md
           git commit -m ":bookmark: Release version $NEW_VERSION"
 
           # Push to main
