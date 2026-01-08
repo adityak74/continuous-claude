@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## [v0.15.0] - 2026-01-08
+
+### What's Changed
+
+- :sparkles: Add reviewer pass functionality (bddf95a)
+- :pencil: Update logo, link to license (5a5492f)
+- :pencil: Revise README to include logo (53d9493)
+
+**Full Changelog**: https://github.com/AnandChowdhary/continuous-claude/compare/v0.14.0...v0.15.0
+
+
 ## [v0.14.0] - 2025-11-30
 
 ### What's Changed
