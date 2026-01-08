@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## [v0.17.0] - 2026-01-08
+
+### What's Changed
+
+- :sparkles: Add real-time outputs (058cf02)
+
+**Full Changelog**: https://github.com/AnandChowdhary/continuous-claude/compare/v0.16.0...v0.17.0
+
+
 ## [v0.16.0] - 2026-01-08
 
 ### What's Changed
