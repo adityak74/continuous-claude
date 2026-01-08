@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## [v0.16.0] - 2026-01-08
+
+### What's Changed
+
+- :sparkles: Add support for committing on the current branch (ae949ae)
+
+**Full Changelog**: https://github.com/AnandChowdhary/continuous-claude/compare/v0.15.0...v0.16.0
+
+
 ## [v0.15.0] - 2026-01-08
 
 ### What's Changed
