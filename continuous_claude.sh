@@ -43,6 +43,26 @@ PROMPT_REVIEWER_CONTEXT="## CODE REVIEW CONTEXT
 
 You are performing a review pass on changes just made by another developer. This is NOT a new feature implementation - you are reviewing and validating existing changes using the instructions given below by the user. Feel free to use git commands to see what changes were made if it's helpful to you."
 
+PROMPT_CI_FIX_CONTEXT="## CI FAILURE FIX CONTEXT
+
+You are analyzing and fixing a CI/CD failure for a pull request.
+
+**Your task:**
+1. Inspect the failed CI workflow using the commands below
+2. Analyze the error logs to understand what went wrong
+3. Make the necessary code changes to fix the issue
+4. Stage and commit your changes (they will be pushed to update the PR)
+
+**Commands to inspect CI failures:**
+- \`gh run list --status failure --limit 3\` - List recent failed runs
+- \`gh run view <RUN_ID> --log-failed\` - View failed job logs (shorter output)
+- \`gh run view <RUN_ID> --log\` - View full logs for a specific run
+
+**Important:**
+- Focus only on fixing the CI failure, not adding new features
+- Make minimal changes necessary to pass CI
+- If the failure seems unfixable (e.g., flaky test, infrastructure issue), explain why in your response"
+
 PROMPT=""
 MAX_RUNS=""
 MAX_COST=""
@@ -70,6 +90,8 @@ i=1
 EXTRA_CLAUDE_FLAGS=()
 REVIEW_PROMPT=""
 start_time=""
+CI_RETRY_ENABLED=true
+CI_RETRY_MAX_ATTEMPTS=1
 
 parse_duration() {
     # Parse a duration string like "2h", "30m", "1h30m", "90s" to seconds
@@ -184,6 +206,8 @@ OPTIONAL FLAGS:
     --completion-threshold <num>  Number of consecutive signals to stop early (default: 3)
     -r, --review-prompt <text>    Run a reviewer pass after each iteration to validate changes
                                   (e.g., run build/lint/tests and fix any issues)
+    --disable-ci-retry            Disable automatic CI failure retry (enabled by default)
+    --ci-retry-max <number>       Maximum CI fix attempts per PR (default: 1)
 
 COMMANDS:
     update                        Check for and install the latest version
@@ -235,6 +259,12 @@ EXAMPLES:
     # Use a reviewer to validate and fix changes after each iteration
     continuous-claude -p "Add new feature" -m 5 --owner myuser --repo myproject \\
         -r "Run npm test and npm run lint, fix any failures"
+
+    # Allow up to 2 CI fix attempts per PR (default is 1)
+    continuous-claude -p "Add tests" -m 5 --owner myuser --repo myproject --ci-retry-max 2
+
+    # Disable automatic CI failure retry
+    continuous-claude -p "Add tests" -m 5 --owner myuser --repo myproject --disable-ci-retry
 
     # Check for and install updates
     continuous-claude update
@@ -648,6 +678,14 @@ parse_arguments() {
                 REVIEW_PROMPT="$2"
                 shift 2
                 ;;
+            --disable-ci-retry)
+                CI_RETRY_ENABLED=false
+                shift
+                ;;
+            --ci-retry-max)
+                CI_RETRY_MAX_ATTEMPTS="$2"
+                shift 2
+                ;;
             *)
                 # Collect unknown flags to forward to claude
                 EXTRA_CLAUDE_FLAGS+=("$1")
@@ -723,6 +761,13 @@ validate_arguments() {
     if [ -n "$COMPLETION_THRESHOLD" ]; then
         if ! [[ "$COMPLETION_THRESHOLD" =~ ^[0-9]+$ ]] || [ "$COMPLETION_THRESHOLD" -lt 1 ]; then
             echo "❌ Error: --completion-threshold must be a positive integer" >&2
+            exit 1
+        fi
+    fi
+
+    if [ -n "$CI_RETRY_MAX_ATTEMPTS" ]; then
+        if ! [[ "$CI_RETRY_MAX_ATTEMPTS" =~ ^[0-9]+$ ]] || [ "$CI_RETRY_MAX_ATTEMPTS" -lt 1 ]; then
+            echo "❌ Error: --ci-retry-max must be a positive integer" >&2
             exit 1
         fi
     fi
@@ -986,6 +1031,31 @@ wait_for_pr_checks() {
     return 1
 }
 
+get_failed_run_id() {
+    local pr_number="$1"
+    local owner="$2"
+    local repo="$3"
+
+    # Get the most recent failed workflow run for this PR's head SHA
+    local head_sha
+    head_sha=$(gh pr view "$pr_number" --repo "$owner/$repo" --json headRefOid --jq '.headRefOid' 2>/dev/null)
+
+    if [ -z "$head_sha" ]; then
+        return 1
+    fi
+
+    # Get failed runs for this commit
+    local run_id
+    run_id=$(gh run list --repo "$owner/$repo" --commit "$head_sha" --status failure --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null)
+
+    if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
+        return 1
+    fi
+
+    echo "$run_id"
+    return 0
+}
+
 merge_pr_and_cleanup() {
     local pr_number="$1"
     local owner="$2"
@@ -1182,12 +1252,30 @@ continuous_claude_commit() {
     echo "🔍 $iteration_display PR #$pr_number created, waiting 5 seconds for GitHub to set up..." >&2
     sleep 5
     if ! wait_for_pr_checks "$pr_number" "$GITHUB_OWNER" "$GITHUB_REPO" "$iteration_display"; then
-        echo "⚠️  $iteration_display PR checks failed or timed out, closing PR and deleting remote branch..." >&2
-        gh pr close "$pr_number" --repo "$GITHUB_OWNER/$GITHUB_REPO" --delete-branch >/dev/null 2>&1 || true
-        echo "🗑️  $iteration_display Cleaning up local branch: $branch_name" >&2
-        git checkout "$main_branch" >/dev/null 2>&1
-        git branch -D "$branch_name" >/dev/null 2>&1 || true
-        return 1
+        # CI checks failed - attempt retry if enabled
+        if [ "$CI_RETRY_ENABLED" = "true" ]; then
+            echo "🔧 $iteration_display CI checks failed, attempting automatic fix..." >&2
+            if attempt_ci_fix_and_recheck "$pr_number" "$GITHUB_OWNER" "$GITHUB_REPO" "$branch_name" "$iteration_display" "$main_branch" "$ERROR_LOG"; then
+                echo "🎉 $iteration_display CI fix successful!" >&2
+                # Continue to merge
+            else
+                # CI fix failed, close PR as before
+                echo "⚠️  $iteration_display CI fix unsuccessful, closing PR and deleting remote branch..." >&2
+                gh pr close "$pr_number" --repo "$GITHUB_OWNER/$GITHUB_REPO" --delete-branch >/dev/null 2>&1 || true
+                echo "🗑️  $iteration_display Cleaning up local branch: $branch_name" >&2
+                git checkout "$main_branch" >/dev/null 2>&1
+                git branch -D "$branch_name" >/dev/null 2>&1 || true
+                return 1
+            fi
+        else
+            # Original behavior - close PR immediately
+            echo "⚠️  $iteration_display PR checks failed or timed out, closing PR and deleting remote branch..." >&2
+            gh pr close "$pr_number" --repo "$GITHUB_OWNER/$GITHUB_REPO" --delete-branch >/dev/null 2>&1 || true
+            echo "🗑️  $iteration_display Cleaning up local branch: $branch_name" >&2
+            git checkout "$main_branch" >/dev/null 2>&1
+            git branch -D "$branch_name" >/dev/null 2>&1 || true
+            return 1
+        fi
     fi
 
     if ! merge_pr_and_cleanup "$pr_number" "$GITHUB_OWNER" "$GITHUB_REPO" "$branch_name" "$iteration_display" "$main_branch"; then
@@ -1535,6 +1623,145 @@ ${review_prompt}"
 
     echo "✅ $iteration_display Reviewer pass completed" >&2
     return 0
+}
+
+run_ci_fix_iteration() {
+    local iteration_display="$1"
+    local pr_number="$2"
+    local owner="$3"
+    local repo="$4"
+    local branch_name="$5"
+    local error_log="$6"
+    local retry_attempt="$7"
+
+    echo "🔧 $iteration_display Attempting to fix CI failure (attempt $retry_attempt/$CI_RETRY_MAX_ATTEMPTS)..." >&2
+
+    # Get the failed run ID for context
+    local failed_run_id
+    failed_run_id=$(get_failed_run_id "$pr_number" "$owner" "$repo")
+
+    # Build the CI fix prompt
+    local ci_fix_prompt="${PROMPT_CI_FIX_CONTEXT}
+
+## CURRENT CONTEXT
+
+- Repository: $owner/$repo
+- PR Number: #$pr_number
+- Branch: $branch_name"
+
+    if [ -n "$failed_run_id" ]; then
+        ci_fix_prompt+="
+- Failed Run ID: $failed_run_id (use this with \`gh run view $failed_run_id --log-failed\`)"
+    fi
+
+    ci_fix_prompt+="
+
+## INSTRUCTIONS
+
+1. Start by running \`gh run list --status failure --limit 3\` to see recent failures
+2. Then use \`gh run view <RUN_ID> --log-failed\` to see the error details
+3. Analyze what went wrong and fix it
+4. After making changes, stage and commit them with a clear commit message describing the fix"
+
+    # Run Claude with the CI fix prompt
+    local result
+    local claude_exit_code=0
+    result=$(run_claude_iteration "$ci_fix_prompt" "$ADDITIONAL_FLAGS" "$error_log" "$iteration_display") || claude_exit_code=$?
+
+    if [ $claude_exit_code -ne 0 ]; then
+        echo "❌ $iteration_display CI fix attempt failed with exit code: $claude_exit_code" >&2
+        return 1
+    fi
+
+    # Parse and validate the result
+    local parse_result=$(parse_claude_result "$result")
+    if [ "$?" != "0" ]; then
+        echo "❌ $iteration_display CI fix returned error: $parse_result" >&2
+        return 1
+    fi
+
+    # Extract and accumulate cost from CI fix (stream-json format)
+    local fix_cost=$(echo "$result" | jq -s -r '.[-1].total_cost_usd // empty')
+    if [ -n "$fix_cost" ]; then
+        printf "💰 $iteration_display CI fix cost: \$%.3f\n" "$fix_cost" >&2
+        total_cost=$(awk "BEGIN {printf \"%.3f\", $total_cost + $fix_cost}")
+    fi
+
+    # Check if there are any changes to commit/push
+    local has_changes=false
+    if ! git diff --quiet || ! git diff --cached --quiet; then
+        has_changes=true
+    fi
+    if [ -n "$(git ls-files --others --exclude-standard)" ]; then
+        has_changes=true
+    fi
+
+    if [ "$has_changes" = "false" ]; then
+        echo "⚠️  $iteration_display CI fix made no changes" >&2
+        return 1
+    fi
+
+    # Check if changes are already committed
+    local uncommitted_changes=false
+    if ! git diff --quiet || ! git diff --cached --quiet || [ -n "$(git ls-files --others --exclude-standard)" ]; then
+        uncommitted_changes=true
+    fi
+
+    if [ "$uncommitted_changes" = "true" ]; then
+        # Commit the fix using the same commit prompt pattern
+        echo "💬 $iteration_display Committing CI fix..." >&2
+        if ! claude -p "$PROMPT_COMMIT_MESSAGE" --allowedTools "Bash(git)" --dangerously-skip-permissions >/dev/null 2>&1; then
+            echo "⚠️  $iteration_display Failed to commit CI fix" >&2
+            return 1
+        fi
+    fi
+
+    # Push the fix to update the PR
+    echo "📤 $iteration_display Pushing CI fix to branch..." >&2
+    if ! git push origin "$branch_name" >/dev/null 2>&1; then
+        echo "⚠️  $iteration_display Failed to push CI fix" >&2
+        return 1
+    fi
+
+    echo "✅ $iteration_display CI fix pushed, waiting for new checks..." >&2
+    return 0
+}
+
+attempt_ci_fix_and_recheck() {
+    local pr_number="$1"
+    local owner="$2"
+    local repo="$3"
+    local branch_name="$4"
+    local iteration_display="$5"
+    local main_branch="$6"
+    local error_log="$7"
+
+    local retry_attempt=1
+
+    while [ $retry_attempt -le $CI_RETRY_MAX_ATTEMPTS ]; do
+        # Run CI fix iteration
+        if ! run_ci_fix_iteration "$iteration_display" "$pr_number" "$owner" "$repo" "$branch_name" "$error_log" "$retry_attempt"; then
+            echo "⚠️  $iteration_display CI fix attempt $retry_attempt failed" >&2
+            retry_attempt=$((retry_attempt + 1))
+            continue
+        fi
+
+        # Wait a bit for GitHub to register the new push
+        sleep 5
+
+        # Wait for new CI checks
+        echo "🔍 $iteration_display Waiting for CI checks after fix..." >&2
+        if wait_for_pr_checks "$pr_number" "$owner" "$repo" "$iteration_display"; then
+            echo "✅ $iteration_display CI checks passed after fix!" >&2
+            return 0
+        fi
+
+        echo "⚠️  $iteration_display CI still failing after fix attempt $retry_attempt" >&2
+        retry_attempt=$((retry_attempt + 1))
+    done
+
+    echo "❌ $iteration_display All CI fix attempts exhausted" >&2
+    return 1
 }
 
 parse_claude_result() {

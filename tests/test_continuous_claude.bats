@@ -1555,7 +1555,7 @@ setup() {
 
 @test "wait_for_pr_checks does not print waiting message when checks found immediately" {
     source "$SCRIPT_PATH"
-    
+
     # Mock gh to return checks immediately (no waiting)
     function gh() {
         if [ "$1" = "pr" ] && [ "$2" = "checks" ]; then
@@ -1567,22 +1567,146 @@ setup() {
         fi
         return 1
     }
-    
+
     # Mock sleep to avoid actual waiting
     function sleep() {
         return 0
     }
-    
+
     export -f gh sleep
-    
+
     # Capture stderr output
     run bash -c "
         source '$SCRIPT_PATH'
         wait_for_pr_checks 123 'owner' 'repo' '(1/1)' 2>&1
     "
-    
+
     # Should NOT contain waiting message when checks are found immediately
     refute_output --partial "⏳ Waiting for checks to start"
     # Should show check status instead
     assert_output --partial "Found"
+}
+
+@test "parse_arguments sets default CI retry enabled" {
+    source "$SCRIPT_PATH"
+
+    assert_equal "$CI_RETRY_ENABLED" "true"
+    assert_equal "$CI_RETRY_MAX_ATTEMPTS" "1"
+}
+
+@test "parse_arguments handles disable-ci-retry flag" {
+    source "$SCRIPT_PATH"
+    CI_RETRY_ENABLED="true"
+    parse_arguments --disable-ci-retry
+
+    assert_equal "$CI_RETRY_ENABLED" "false"
+}
+
+@test "parse_arguments handles ci-retry-max flag" {
+    source "$SCRIPT_PATH"
+    CI_RETRY_MAX_ATTEMPTS="1"
+    parse_arguments --ci-retry-max 3
+
+    assert_equal "$CI_RETRY_MAX_ATTEMPTS" "3"
+}
+
+@test "validate_arguments fails with invalid ci-retry-max" {
+    source "$SCRIPT_PATH"
+    PROMPT="test"
+    MAX_RUNS="5"
+    GITHUB_OWNER="user"
+    GITHUB_REPO="repo"
+    CI_RETRY_MAX_ATTEMPTS="invalid"
+
+    run validate_arguments
+    assert_failure
+    assert_output --partial "Error: --ci-retry-max must be a positive integer"
+}
+
+@test "validate_arguments fails with zero ci-retry-max" {
+    source "$SCRIPT_PATH"
+    PROMPT="test"
+    MAX_RUNS="5"
+    GITHUB_OWNER="user"
+    GITHUB_REPO="repo"
+    CI_RETRY_MAX_ATTEMPTS="0"
+
+    run validate_arguments
+    assert_failure
+    assert_output --partial "Error: --ci-retry-max must be a positive integer"
+}
+
+@test "validate_arguments passes with valid ci-retry-max" {
+    source "$SCRIPT_PATH"
+    PROMPT="test"
+    MAX_RUNS="5"
+    GITHUB_OWNER="user"
+    GITHUB_REPO="repo"
+    CI_RETRY_MAX_ATTEMPTS="2"
+
+    run validate_arguments
+    assert_success
+}
+
+@test "get_failed_run_id returns run ID for failed workflow" {
+    source "$SCRIPT_PATH"
+
+    # Mock gh commands - must handle --jq flag which gh processes internally
+    function gh() {
+        if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+            # gh pr view ... --jq '.headRefOid' returns just the value
+            echo "abc123"
+            return 0
+        elif [ "$1" = "run" ] && [ "$2" = "list" ]; then
+            # gh run list ... --jq '.[0].databaseId' returns just the value
+            echo "12345"
+            return 0
+        fi
+        return 1
+    }
+    export -f gh
+
+    run get_failed_run_id 123 "owner" "repo"
+
+    assert_success
+    assert_output "12345"
+}
+
+@test "get_failed_run_id returns failure when no failed runs" {
+    source "$SCRIPT_PATH"
+
+    # Mock gh commands
+    function gh() {
+        if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+            echo "abc123"
+            return 0
+        elif [ "$1" = "run" ] && [ "$2" = "list" ]; then
+            # Return null (what jq returns for .[0].databaseId on empty array)
+            echo "null"
+            return 0
+        fi
+        return 1
+    }
+    export -f gh
+
+    run get_failed_run_id 123 "owner" "repo"
+
+    assert_failure
+}
+
+@test "get_failed_run_id returns failure when pr view fails" {
+    source "$SCRIPT_PATH"
+
+    # Mock gh commands
+    function gh() {
+        if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+            return 1
+        fi
+        return 1
+    }
+    export -f gh
+
+    run get_failed_run_id 123 "owner" "repo"
+
+    assert_failure
 }
