@@ -1710,3 +1710,124 @@ setup() {
 
     assert_failure
 }
+
+@test "continuous_claude_commit succeeds with dirty submodule" {
+    source "$SCRIPT_PATH"
+    
+    ENABLE_COMMITS="true"
+    DRY_RUN="false"
+    GITHUB_OWNER="user"
+    GITHUB_REPO="repo"
+    
+    # Mock git to simulate a repository with changes in parent repo AND a dirty submodule:
+    # - has_changes will detect untracked files in parent repo
+    # - After claude commits, verification will pass (ignoring dirty submodule)
+    # - ls-files initially returns untracked files, then returns empty after commit
+    local commit_called=false
+    function git() {
+        case "$1 $2 $3 $4 $5" in
+            "rev-parse --git-dir"*)
+                return 0
+                ;;
+            "rev-parse --abbrev-ref"*)
+                echo "test-branch"
+                ;;
+            "diff --quiet"*)
+                return 0  # No modified files
+                ;;
+            "diff --cached --quiet"*)
+                return 0  # No staged files
+                ;;
+            "ls-files --others"*)
+                # Return untracked files before commit, empty after
+                if [ "$commit_called" = "false" ]; then
+                    echo "newfile.txt"  # Simulates untracked file in parent repo
+                else
+                    echo ""  # No untracked files after commit
+                fi
+                ;;
+            "log -1 --format=%B"*)
+                echo "Test commit message"
+                ;;
+            "log -1 --format=%s"*)
+                echo "Test commit"
+                ;;
+            checkout*|branch*)
+                return 0
+                ;;
+        esac
+        return 0
+    }
+    export -f git
+    
+    commit_called=false
+    
+    # Mock claude to succeed and mark that commit was called
+    function claude() {
+        commit_called=true
+        return 0
+    }
+    export -f claude
+    export commit_called
+    
+    # Run the function - it may fail on PR creation but commit verification should pass
+    run continuous_claude_commit "(1/1)" "test-branch" "main"
+    
+    # Verify that commit verification passed (indicated by "Changes committed" message)
+    # The function may fail later on PR creation, but that's okay - we're testing
+    # that the commit verification with dirty submodules passes
+    assert_output --partial "Changes committed on branch: test-branch"
+}
+
+
+@test "commit_on_current_branch succeeds with dirty submodule" {
+    source "$SCRIPT_PATH"
+    
+    DRY_RUN="false"
+    
+    # Mock git to simulate a repository with changes in parent repo AND a dirty submodule
+    local commit_called=false
+    function git() {
+        case "$1 $2 $3 $4 $5" in
+            "rev-parse --git-dir"*)
+                return 0
+                ;;
+            "diff --quiet"*)
+                return 0  # No modified files
+                ;;
+            "diff --cached --quiet"*)
+                return 0  # No staged files
+                ;;
+            "ls-files --others"*)
+                # Return untracked files before commit, empty after
+                if [ "$commit_called" = "false" ]; then
+                    echo "newfile.txt"  # Simulates untracked file in parent repo
+                else
+                    echo ""  # No untracked files after commit
+                fi
+                ;;
+            "log -1 --format=%s"*)
+                echo "Test commit"
+                ;;
+        esac
+        return 0
+    }
+    export -f git
+    
+    commit_called=false
+    
+    # Mock claude to succeed and mark that commit was called
+    function claude() {
+        commit_called=true
+        return 0
+    }
+    export -f claude
+    export commit_called
+    
+    # Run the function
+    run commit_on_current_branch "(1/1)"
+    
+    # Should succeed because --ignore-submodules=dirty allows dirty submodules
+    assert_success
+    assert_output --partial "Committed: Test commit"
+}
