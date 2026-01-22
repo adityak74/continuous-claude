@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## [v0.18.4] - 2026-01-22
+
+### What's Changed
+
+- :bug: Update CI fix iteration process to include push instructions (7a6e4a9)
+
+**Full Changelog**: https://github.com/AnandChowdhary/continuous-claude/compare/v0.18.3...v0.18.4
+
+
 ## [v0.18.3] - 2026-01-22
 
 ### What's Changed
