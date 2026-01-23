@@ -1536,6 +1536,44 @@ run_claude_iteration() {
                     printf "   %s %s\n" "$iteration_display" "$output_line" >&2
                 done
             fi
+
+            # Extract tool_use events from assistant messages
+            tool_info=$(echo "$line" | jq -r '
+                if .type == "assistant" then
+                    .message.content[]? |
+                    select(.type == "tool_use") |
+                    (if .name == "Read" then "📖"
+                     elif .name == "Write" then "🖊️"
+                     elif .name == "Edit" then "✏️"
+                     elif .name == "Bash" then "💻"
+                     elif .name == "Glob" then "📁"
+                     elif .name == "Grep" then "🔎"
+                     elif .name == "Task" then "📋"
+                     elif (.name | startswith("WebFetch")) or (.name | startswith("WebSearch")) then "🌍"
+                     else "🛠️"
+                     end) + " " + (
+                        if .name == "Bash" then
+                            (.input.command // "" | split("\n")[0] | if length > 60 then .[0:60] + "..." else . end)
+                        elif .name == "Read" or .name == "Write" or .name == "Edit" then
+                            (.input.file_path // "")
+                        elif .name == "Glob" then
+                            (.input.pattern // "")
+                        elif .name == "Grep" then
+                            (.input.pattern // "") + " in " + (.input.path // ".")
+                        else
+                            .name + " " + ((.input | keys | join(", ")) // "")
+                        end
+                    )
+                else
+                    empty
+                end
+            ' 2>/dev/null)
+
+            if [ -n "$tool_info" ]; then
+                echo "$tool_info" | while IFS= read -r tool_line; do
+                    printf "   %s > %s\n" "$iteration_display" "$tool_line" >&2
+                done
+            fi
         done
     exit_code=${PIPESTATUS[0]}
     set +o pipefail
