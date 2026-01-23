@@ -1831,3 +1831,214 @@ setup() {
     assert_success
     assert_output --partial "Committed: Test commit"
 }
+
+# =========================================
+# Tool logging tests
+# =========================================
+
+@test "tool logging extracts Read tool with relative path" {
+    # Test the jq expression for tool extraction with relative paths
+    local json='{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/home/user/project/src/file.ts"}}]}}'
+    local pwd="/home/user/project"
+
+    run bash -c "echo '$json' | jq -r --arg pwd '$pwd' '
+        def relpath: if startswith(\$pwd + \"/\") then .[\$pwd | length + 1:] elif . == \$pwd then \".\" else . end;
+        if .type == \"assistant\" then
+            .message.content[]? |
+            select(.type == \"tool_use\") |
+            .name + \" \" + ((.input.file_path // \"\") | relpath)
+        else empty end
+    '"
+
+    assert_success
+    assert_output "Read src/file.ts"
+}
+
+@test "tool logging extracts WebFetch with URL and prompt" {
+    local json='{"type":"assistant","message":{"content":[{"type":"tool_use","name":"WebFetch","input":{"url":"https://example.com/docs","prompt":"Extract the main content from this page"}}]}}'
+
+    run bash -c "echo '$json' | jq -r '
+        if .type == \"assistant\" then
+            .message.content[]? |
+            select(.type == \"tool_use\") |
+            (.input.url // \"\") + \" → \" + ((.input.prompt // \"\") | if length > 40 then .[0:40] + \"...\" else . end)
+        else empty end
+    '"
+
+    assert_success
+    assert_output "https://example.com/docs → Extract the main content from this page"
+}
+
+@test "tool logging extracts WebSearch with query" {
+    local json='{"type":"assistant","message":{"content":[{"type":"tool_use","name":"WebSearch","input":{"query":"react documentation 2026"}}]}}'
+
+    run bash -c "echo '$json' | jq -r '
+        if .type == \"assistant\" then
+            .message.content[]? |
+            select(.type == \"tool_use\") |
+            \"\\\"\" + (.input.query // \"\") + \"\\\"\"
+        else empty end
+    '"
+
+    assert_success
+    assert_output '"react documentation 2026"'
+}
+
+@test "tool logging extracts Task with subagent type and description" {
+    local json='{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Task","input":{"subagent_type":"Explore","description":"find auth files"}}]}}'
+
+    run bash -c "echo '$json' | jq -r '
+        if .type == \"assistant\" then
+            .message.content[]? |
+            select(.type == \"tool_use\") |
+            \"[\" + (.input.subagent_type // \"agent\") + \"] \" + (.input.description // \"\")
+        else empty end
+    '"
+
+    assert_success
+    assert_output "[Explore] find auth files"
+}
+
+@test "tool logging extracts Grep with pattern and path" {
+    local json='{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Grep","input":{"pattern":"function.*test","path":"/home/user/project/src","glob":"*.ts"}}]}}'
+    local pwd="/home/user/project"
+
+    run bash -c "echo '$json' | jq -r --arg pwd '$pwd' '
+        def relpath: if startswith(\$pwd + \"/\") then .[\$pwd | length + 1:] elif . == \$pwd then \".\" else . end;
+        if .type == \"assistant\" then
+            .message.content[]? |
+            select(.type == \"tool_use\") |
+            \"\\\"\" + (.input.pattern // \"\") + \"\\\"\" + (if .input.path then \" in \" + (.input.path | relpath) else \"\" end) + (if .input.glob then \" (\" + .input.glob + \")\" else \"\" end)
+        else empty end
+    '"
+
+    assert_success
+    assert_output '"function.*test" in src (*.ts)'
+}
+
+@test "tool logging extracts Bash command truncated" {
+    local json='{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"git log --oneline --graph --all --decorate --color=always | head -20"}}]}}'
+
+    run bash -c "echo '$json' | jq -r '
+        if .type == \"assistant\" then
+            .message.content[]? |
+            select(.type == \"tool_use\") |
+            (.input.command // \"\" | split(\"\n\")[0] | if length > 80 then .[0:80] + \"...\" else . end)
+        else empty end
+    '"
+
+    assert_success
+    assert_output "git log --oneline --graph --all --decorate --color=always | head -20"
+}
+
+@test "tool logging shows correct emoji for Read" {
+    local json='{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/test.ts"}}]}}'
+
+    run bash -c "echo '$json' | jq -r '
+        if .type == \"assistant\" then
+            .message.content[]? |
+            select(.type == \"tool_use\") |
+            if .name == \"Read\" then \"📖\" else \"other\" end
+        else empty end
+    '"
+
+    assert_success
+    assert_output "📖"
+}
+
+@test "tool logging shows correct emoji for WebFetch" {
+    local json='{"type":"assistant","message":{"content":[{"type":"tool_use","name":"WebFetch","input":{"url":"https://test.com"}}]}}'
+
+    run bash -c "echo '$json' | jq -r '
+        if .type == \"assistant\" then
+            .message.content[]? |
+            select(.type == \"tool_use\") |
+            if .name == \"WebFetch\" or (.name | startswith(\"WebFetch\")) then \"🌍\" else \"other\" end
+        else empty end
+    '"
+
+    assert_success
+    assert_output "🌍"
+}
+
+@test "tool logging shows correct emoji for Task tools" {
+    local json='{"type":"assistant","message":{"content":[{"type":"tool_use","name":"TaskCreate","input":{"subject":"test task"}}]}}'
+
+    run bash -c "echo '$json' | jq -r '
+        if .type == \"assistant\" then
+            .message.content[]? |
+            select(.type == \"tool_use\") |
+            if (.name | test(\"Todo|TaskCreate|TaskUpdate|TaskList|TaskGet\"; \"i\")) then \"📝\" else \"other\" end
+        else empty end
+    '"
+
+    assert_success
+    assert_output "📝"
+}
+
+@test "tool logging shows correct emoji for MCP tools" {
+    local json='{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__ide__getDiagnostics","input":{}}]}}'
+
+    run bash -c "echo '$json' | jq -r '
+        if .type == \"assistant\" then
+            .message.content[]? |
+            select(.type == \"tool_use\") |
+            if (.name | startswith(\"mcp__\")) then \"🔌\" else \"other\" end
+        else empty end
+    '"
+
+    assert_success
+    assert_output "🔌"
+}
+
+@test "tool logging extracts MCP tool name correctly" {
+    local json='{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__ide__getDiagnostics","input":{}}]}}'
+
+    run bash -c "echo '$json' | jq -r '
+        if .type == \"assistant\" then
+            .message.content[]? |
+            select(.type == \"tool_use\") |
+            (.name | split(\"__\") | .[1:] | join(\"/\"))
+        else empty end
+    '"
+
+    assert_success
+    assert_output "ide/getDiagnostics"
+}
+
+@test "tool logging handles Read with offset" {
+    local json='{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/home/user/project/file.ts","offset":100}}]}}'
+    local pwd="/home/user/project"
+
+    run bash -c "echo '$json' | jq -r --arg pwd '$pwd' '
+        def relpath: if startswith(\$pwd + \"/\") then .[\$pwd | length + 1:] elif . == \$pwd then \".\" else . end;
+        if .type == \"assistant\" then
+            .message.content[]? |
+            select(.type == \"tool_use\") |
+            ((.input.file_path // \"\") | relpath) + (if .input.offset then \" (line \" + (.input.offset | tostring) + \")\" else \"\" end)
+        else empty end
+    '"
+
+    assert_success
+    assert_output "file.ts (line 100)"
+}
+
+@test "relpath function handles exact PWD match" {
+    run bash -c "echo '\"/home/user/project\"' | jq -r --arg pwd '/home/user/project' '
+        def relpath: if startswith(\$pwd + \"/\") then .[\$pwd | length + 1:] elif . == \$pwd then \".\" else . end;
+        . | relpath
+    '"
+
+    assert_success
+    assert_output "."
+}
+
+@test "relpath function handles path outside PWD" {
+    run bash -c "echo '\"/other/path/file.ts\"' | jq -r --arg pwd '/home/user/project' '
+        def relpath: if startswith(\$pwd + \"/\") then .[\$pwd | length + 1:] elif . == \$pwd then \".\" else . end;
+        . | relpath
+    '"
+
+    assert_success
+    assert_output "/other/path/file.ts"
+}

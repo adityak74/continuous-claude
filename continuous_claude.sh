@@ -1538,30 +1538,72 @@ run_claude_iteration() {
             fi
 
             # Extract tool_use events from assistant messages
-            tool_info=$(echo "$line" | jq -r '
+            # Pass PWD to jq to convert absolute paths to relative paths
+            tool_info=$(echo "$line" | jq -r --arg pwd "$PWD" '
+                # Helper function to strip PWD prefix from paths
+                def relpath: if startswith($pwd + "/") then .[$pwd | length + 1:] elif . == $pwd then "." else . end;
                 if .type == "assistant" then
                     .message.content[]? |
                     select(.type == "tool_use") |
                     (if .name == "Read" then "📖"
                      elif .name == "Write" then "🖊️"
-                     elif .name == "Edit" then "✏️"
+                     elif .name == "Edit" or .name == "MultiEdit" then "✏️"
                      elif .name == "Bash" then "💻"
                      elif .name == "Glob" then "📁"
                      elif .name == "Grep" then "🔎"
                      elif .name == "Task" then "📋"
-                     elif (.name | startswith("WebFetch")) or (.name | startswith("WebSearch")) then "🌍"
+                     elif .name == "WebFetch" or (.name | startswith("WebFetch")) then "🌍"
+                     elif .name == "WebSearch" or (.name | startswith("WebSearch")) then "🔍"
+                     elif .name == "NotebookEdit" then "📓"
+                     elif .name == "AskUserQuestion" then "❓"
+                     elif .name == "Skill" or .name == "SlashCommand" then "⚡"
+                     elif (.name | test("Todo|TaskCreate|TaskUpdate|TaskList|TaskGet"; "i")) then "📝"
+                     elif .name == "TaskOutput" or .name == "BashOutput" then "📤"
+                     elif .name == "KillShell" then "🛑"
+                     elif .name == "ExitPlanMode" or .name == "EnterPlanMode" then "🗺️"
+                     elif (.name | startswith("mcp__")) then "🔌"
                      else "🛠️"
                      end) + " " + (
                         if .name == "Bash" then
-                            (.input.command // "" | split("\n")[0] | if length > 60 then .[0:60] + "..." else . end)
-                        elif .name == "Read" or .name == "Write" or .name == "Edit" then
-                            (.input.file_path // "")
+                            (.input.command // "" | split("\n")[0] | if length > 80 then .[0:80] + "..." else . end)
+                        elif .name == "Read" then
+                            ((.input.file_path // "") | relpath) + (if .input.offset then " (line " + (.input.offset | tostring) + ")" else "" end)
+                        elif .name == "Write" or .name == "Edit" or .name == "MultiEdit" then
+                            ((.input.file_path // "") | relpath)
                         elif .name == "Glob" then
-                            (.input.pattern // "")
+                            (.input.pattern // "") + (if .input.path then " in " + (.input.path | relpath) else "" end)
                         elif .name == "Grep" then
-                            (.input.pattern // "") + " in " + (.input.path // ".")
+                            "\"" + (.input.pattern // "") + "\"" + (if .input.path then " in " + (.input.path | relpath) else "" end) + (if .input.glob then " (" + .input.glob + ")" else "" end)
+                        elif .name == "WebFetch" or (.name | startswith("WebFetch")) then
+                            (.input.url // "") + " → " + ((.input.prompt // "") | if length > 40 then .[0:40] + "..." else . end)
+                        elif .name == "WebSearch" or (.name | startswith("WebSearch")) then
+                            "\"" + (.input.query // "") + "\"" + (if .input.allowed_domains then " (domains: " + (.input.allowed_domains | join(", ")) + ")" else "" end)
+                        elif .name == "Task" then
+                            "[" + (.input.subagent_type // "agent") + "] " + (.input.description // "")
+                        elif .name == "NotebookEdit" then
+                            ((.input.notebook_path // "") | relpath) + " [" + (.input.edit_mode // "replace") + "]"
+                        elif .name == "AskUserQuestion" then
+                            (.input.questions[0].question // "" | if length > 60 then .[0:60] + "..." else . end)
+                        elif .name == "Skill" or .name == "SlashCommand" then
+                            "/" + (.input.skill // .input.command // "") + (if .input.args then " " + .input.args else "" end)
+                        elif (.name | test("TodoWrite"; "i")) then
+                            (if .input.todos then ((.input.todos | length | tostring) + " todo(s)") else (.input | keys | join(", ")) end)
+                        elif (.name | test("TaskCreate"; "i")) then
+                            (.input.subject // .input.description // "")
+                        elif (.name | test("TaskUpdate"; "i")) then
+                            "#" + (.input.taskId // "") + " → " + (.input.status // "update")
+                        elif (.name | test("TaskList|TaskGet"; "i")) then
+                            (if .input.taskId then "#" + .input.taskId else "" end)
+                        elif .name == "TaskOutput" or .name == "BashOutput" then
+                            "id:" + (.input.task_id // .input.bash_id // "")
+                        elif .name == "KillShell" then
+                            "id:" + (.input.shell_id // "")
+                        elif .name == "ExitPlanMode" or .name == "EnterPlanMode" then
+                            ""
+                        elif (.name | startswith("mcp__")) then
+                            (.name | split("__") | .[1:] | join("/"))
                         else
-                            .name + " " + ((.input | keys | join(", ")) // "")
+                            .name + "(" + ((.input | keys | join(", ")) // "") + ")"
                         end
                     )
                 else
