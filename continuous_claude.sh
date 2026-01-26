@@ -1593,7 +1593,7 @@ run_claude_iteration() {
                 # Get emoji with fallback
                 def get_emoji:
                     if .name == "Read" then "📖"
-                    elif .name == "Write" then "🖊️"
+                    elif .name == "Write" then "✍️"
                     elif .name == "Edit" or .name == "MultiEdit" then "✏️"
                     elif .name == "Bash" then "💻"
                     elif .name == "Glob" then "📁"
