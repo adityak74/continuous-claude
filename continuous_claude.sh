@@ -864,6 +864,90 @@ parse_update_flags() {
     done
 }
 
+parse_reset_time() {
+    local time_str="$1"
+    local reset_timestamp=""
+    
+    # Try ISO format first (e.g., 2026-02-21T20:00:00)
+    local iso_match
+    iso_match=$(echo "$time_str" | grep -oE "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}" | head -1)
+    if [ -n "$iso_match" ]; then
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            reset_timestamp=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$iso_match" +%s 2>/dev/null)
+        else
+            reset_timestamp=$(date -d "$iso_match" +%s 2>/dev/null)
+        fi
+        echo "$reset_timestamp"
+        return 0
+    fi
+    
+    # Try "resets 8pm" or "resets 8:00 PM" format - must have am/pm suffix
+    local extracted
+    extracted=$(echo "$time_str" | grep -oE "[0-9]{1,2}(:[0-9]{2})?\s*[ap]m" | head -1 | tr '[:upper:]' '[:lower:]' | sed 's/[[:space:]]//g')
+    
+    if [ -n "$extracted" ] && [[ "$extracted" == *"am" || "$extracted" == *"pm" ]]; then
+        local hour=""
+        local min="0"
+        
+        # Extract hour - must be 1-12
+        hour=$(echo "$extracted" | sed -E 's/([0-9]+).*/\1/' | sed 's/^0//')
+        
+        # Check if PM
+        local is_pm=false
+        if [[ "$extracted" == *"pm"* ]]; then
+            is_pm=true
+        fi
+        
+        # Extract minutes if present (e.g., "8:30pm" -> "30")
+        local min_part
+        min_part=$(echo "$extracted" | grep -oE ":[0-9]+" | head -1)
+        if [ -n "$min_part" ]; then
+            min=$(echo "$min_part" | sed 's/://')
+        fi
+        
+        # Validate hour is numeric and in range
+        if [ -z "$hour" ] || ! [[ "$hour" =~ ^[0-9]+$ ]] || [ "$hour" -lt 1 ] || [ "$hour" -gt 12 ]; then
+            echo ""
+            return 1
+        fi
+        
+        # Convert to 24-hour
+        if [ "$is_pm" = true ] && [ "$hour" -lt 12 ]; then
+            hour=$((hour + 12))
+        elif [ "$is_pm" = false ] && [ "$hour" -eq 12 ]; then
+            hour=0
+        fi
+        
+        # Get current time
+        local now
+        now=$(date +%s)
+        
+        # Get current hour and minute
+        local current_hour
+        current_hour=$(date +%-H 2>/dev/null || date +%k | tr -d ' ')
+        local current_min
+        current_min=$(date +%-M 2>/dev/null || date +%M)
+        
+        # Calculate target time today in seconds from midnight
+        local target_seconds=$((hour * 3600 + min * 60))
+        local current_seconds=$((current_hour * 3600 + current_min * 60))
+        
+        # If target is earlier than current time, it's tomorrow
+        if [ $target_seconds -le $current_seconds ]; then
+            reset_timestamp=$((now + 86400 - current_seconds + target_seconds))
+        else
+            reset_timestamp=$((now + target_seconds - current_seconds))
+        fi
+        
+        echo "$reset_timestamp"
+        return 0
+    fi
+    
+    # If all parsing fails, return empty
+    echo ""
+    return 1
+}
+
 check_rate_limit() {
     if [ "$RATE_LIMIT_ENABLED" = "false" ]; then
         return 0
@@ -879,13 +963,8 @@ check_rate_limit() {
     result=$(echo "$status_output" | jq -s -r '.[-1].result // empty' 2>/dev/null)
 
     if echo "$result" | grep -qiE "rate|limit|quota|exceeded|reset"; then
-        local iso_match
-        iso_match=$(echo "$result" | grep -oE "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}" | head -1)
-
         local reset_time
-        if [ -n "$iso_match" ]; then
-            reset_time=$(date -d "$iso_match" +%s 2>/dev/null)
-        fi
+        reset_time=$(parse_reset_time "$result")
 
         if [ -z "$reset_time" ]; then
             reset_time=$(($(date +%s) + RATE_LIMIT_FALLBACK_WAIT/1000))
@@ -902,7 +981,13 @@ check_rate_limit() {
             fi
 
             local wait_minutes=$((wait_seconds / 60))
-            echo "🔄 Rate limited. Sleeping ${wait_minutes} minutes until reset at $(date -d "@$reset_time" "+%Y-%m-%d %H:%M:%S")..." >&2
+            local reset_display
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                reset_display=$(date -r "$reset_time" "+%Y-%m-%d %H:%M:%S")
+            else
+                reset_display=$(date -d "@$reset_time" "+%Y-%m-%d %H:%M:%S")
+            fi
+            echo "🔄 Rate limited. Sleeping ${wait_minutes} minutes until reset at $reset_display..." >&2
             sleep $wait_seconds
             
             echo "⏰ Rate limit reset time reached" >&2
@@ -2095,13 +2180,11 @@ handle_iteration_error() {
         echo "" >&2
         echo "⚠️ $iteration_display Rate limit error detected in iteration" >&2
         
-        local iso_match
-        iso_match=$(grep -oE "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}" "$ERROR_LOG" 2>/dev/null | head -1)
+        local error_content
+        error_content=$(cat "$ERROR_LOG" 2>/dev/null)
         
         local reset_time
-        if [ -n "$iso_match" ]; then
-            reset_time=$(date -d "$iso_match" +%s 2>/dev/null)
-        fi
+        reset_time=$(parse_reset_time "$error_content")
         
         if [ -z "$reset_time" ]; then
             reset_time=$(($(date +%s) + RATE_LIMIT_FALLBACK_WAIT/1000))
@@ -2116,7 +2199,13 @@ handle_iteration_error() {
                 echo "❌ $iteration_display Rate limit wait time exceeds maximum" >&2
             else
                 local wait_minutes=$((wait_seconds / 60))
-                echo "🔄 $iteration_display Sleeping ${wait_minutes} minutes until reset at $(date -d "@$reset_time" "+%Y-%m-%d %H:%M:%S")..." >&2
+                local reset_display
+                if [[ "$OSTYPE" == "darwin"* ]]; then
+                    reset_display=$(date -r "$reset_time" "+%Y-%m-%d %H:%M:%S")
+                else
+                    reset_display=$(date -d "@$reset_time" "+%Y-%m-%d %H:%M:%S")
+                fi
+                echo "🔄 $iteration_display Sleeping ${wait_minutes} minutes until reset at $reset_display..." >&2
                 sleep $wait_seconds
                 echo "⏰ $iteration_display Rate limit reset, will continue on next loop" >&2
                 NEEDS_CONTINUE=true
