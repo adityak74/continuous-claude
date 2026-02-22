@@ -71,6 +71,28 @@ Using Claude Code to drive iterative development, this script fully automates th
 - A `SHARED_TASK_NOTES.md` file maintains continuity by passing context between iterations, enabling seamless handoffs across AI and human developers
 - If multiple agents decide that the project is complete, the loop will stop early.
 
+## 🛡️ Rate Limiting
+
+Continuous Claude includes built-in rate limiting support to handle Claude API token limits gracefully:
+
+### How it works
+
+1. **Pre-check**: Before each iteration, the script queries Claude's token usage status
+2. **Wait if limited**: If rate limited, it parses the reset time and waits until tokens are available
+3. **Auto-continue**: After waiting, it sends a "Continue" command to resume the interrupted task
+4. **Error detection**: If an iteration fails due to rate limits, it extracts the reset time from the error and waits accordingly
+
+### Configuration
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--no-rate-limit` | Disable rate limiting | Enabled |
+| `--rate-limit-interval` | Check interval between iterations | 30000ms (30s) |
+| `--rate-limit-max-wait` | Maximum wait time | 86400000ms (24h) |
+| `--rate-limit-fallback` | Fallback wait when check fails | 18000000ms (5h) |
+
+The rate limiter automatically detects rate limit errors and parses reset times from Claude's responses, ensuring long-running tasks can complete even after hitting token limits.
+
 ## 🚀 Quick start
 
 ### Installation
@@ -155,6 +177,10 @@ continuous-claude --prompt "add unit tests until all code is covered" --max-dura
 - `--completion-signal <phrase>`: Phrase that agents output when entire project is complete (default: `CONTINUOUS_CLAUDE_PROJECT_COMPLETE`)
 - `--completion-threshold <num>`: Number of consecutive completion signals required to stop early (default: `3`)
 - `-r, --review-prompt`: Run a reviewer pass after each iteration to validate changes (e.g., run build/lint/tests and fix any issues)
+- `--no-rate-limit`: Disable automatic rate limiting (enabled by default)
+- `--rate-limit-interval <ms>`: Rate limit check interval in milliseconds (default: `30000`)
+- `--rate-limit-max-wait <ms>`: Maximum wait time on rate limit in milliseconds (default: `86400000` = 24 hours)
+- `--rate-limit-fallback <ms>`: Fallback wait time when check fails in milliseconds (default: `18000000` = 5 hours)
 
 Any additional flags you provide that are not recognized by `continuous-claude` will be automatically forwarded to the underlying `claude` command. For example, you can pass `--allowedTools`, `--model`, or any other Claude Code CLI flags.
 
@@ -220,6 +246,15 @@ continuous-claude -p "add new feature" -m 5 -r "Run npm test and npm run lint, f
 
 # Explicitly specify owner and repo (useful if git remote is not set up or not a GitHub repo)
 continuous-claude -p "add features" -m 5 --owner myuser --repo myproject
+
+# Enable rate limiting with custom check interval (check every 60 seconds)
+continuous-claude -p "long running task" -m 10 --rate-limit-interval 60000
+
+# Disable rate limiting (for faster local development)
+continuous-claude -p "quick task" -m 3 --no-rate-limit
+
+# Set custom max wait time for rate limits (max 1 hour wait)
+continuous-claude -p "task" -m 5 --rate-limit-max-wait 3600000
 
 # Check for and install updates
 continuous-claude update
